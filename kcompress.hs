@@ -39,15 +39,17 @@ instance Eq a => Eq (Assignement a) where
 instance Ord a => Ord (Assignement a) where
   a <= b = protoPixel a <= protoPixel b
 
-instance Random (Int,Int) where
+newtype IntPair = IntPair { unpack :: (Int,Int) }
+
+instance Random IntPair where
   random g =
     let (i,g') = random g
         (j,g'') = random g'
-    in ((i,j),g'')
-  randomR ((i0,j0),(i1,j1)) g =
+    in (IntPair (i,j),g'')
+  randomR (IntPair (i0,j0), IntPair (i1,j1)) g =
     let (i,g') = randomR (i0,i1) g
         (j,g'') = randomR (j0,j1) g'
-    in ((i,j),g'')
+    in (IntPair (i,j),g'')
 
 main :: IO ()
 main = do
@@ -69,17 +71,19 @@ extractImage (ImageRGB8 p)   = promoteImage p
 extractImage (ImageRGB16 p)  = p
 extractImage (ImageRGBA8 p)  = promoteImage $ dropAlphaLayer p
 extractImage (ImageRGBA16 p) = dropAlphaLayer p
+extractImage _ = error "unsuported pixel format"
+
 
 pickProto :: Int -> Int -> Image PixelRGB16 -> [PixelRGB16]
 pickProto n s img =
   let w = imageWidth img
       h = imageHeight img
-      idx = take n $ randomRs ((0,0),(w,h)) (mkStdGen s)
-  in Prelude.map (uncurry (pixelAt img)) idx
+      idx = take n $ randomRs (IntPair (0,0), IntPair (w,h)) (mkStdGen s)
+  in Prelude.map (uncurry (pixelAt img) . unpack) idx
 
 -- TODO: add convergence test
 kmeans :: [PixelRGB16] -> Image PixelRGB16 -> Image PixelRGB16
-kmeans = kmeans' 0
+kmeans = kmeans' (0 :: Int)
   where kmeans' n proto img =
           let as = assign img proto
           in  if n >= 100
@@ -120,20 +124,19 @@ pixelDiv  (PixelRGB16 r0 g0 b0)  (PixelRGB16 r1 g1 b1) =
 
 closest :: Set (Assignement PixelRGB16) -> PixelRGB16 -> Assignement PixelRGB16
 closest as px = fst $ foldl' step start as
-  where norm = pixelNorm px
-        start = (undefined, maxBound :: Int)
-        step (as,da) as' =
+  where start = (undefined, maxBound :: Int)
+        step (as',da) as'' =
           let d = pixelNorm $ px `pixelDiff` protoPixel as'
           in  if d < da
-              then (as',d)
-              else (as,da)
+              then (as'',d)
+              else (as',da)
 
 pixelNorm :: PixelRGB16 -> Int
 pixelNorm (PixelRGB16 r g b) =
   let r' = fromIntegral r
       g' = fromIntegral g
       b' = fromIntegral b
-  in truncate . sqrt $ r'*r' + g'*g' + b'*g'
+  in truncate (sqrt $ r'*r' + g'*g' + b'*g' :: Double)
 
 initialize :: [PixelRGB16] -> Set (Assignement PixelRGB16)
 initialize pxs = fromList $ Prelude.map (\p -> Assignement p (PixelRGB16 0 0 0) 0 empty) pxs
@@ -144,4 +147,3 @@ toImage as img = generateImage indiceMap (imageWidth img) (imageHeight img)
           let as' = toList as
               (p:_) = dropWhile (\a -> not ((x,y) `member` indices a)) as'
           in protoPixel p
-
